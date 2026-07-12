@@ -2,9 +2,7 @@
 
 **Quick Look for Apache Parquet on macOS.** Select a `.parquet` file in Finder, press <kbd>Space</kbd>, see your data — schema, types, and rows in a native table. No Python, no Java, nothing else to install.
 
-<!-- HERO SCREENSHOT: Finder window with a .parquet file selected and the Quick Look
-     panel open, showing the table in dark mode. Save it as docs/hero.png -->
-![Kolon previewing a parquet file](docs/hero.png)
+![Kolon previewing a parquet file with Quick Look](docs/demo.gif)
 
 ## Features
 
@@ -14,10 +12,9 @@
 - **Fast on big files** — powered by an embedded [DuckDB](https://duckdb.org); only the first 500 rows are read, row counts come from parquet metadata
 - **Handles the ugly stuff** — NULLs shown distinctly, 300+ column files, megabyte-sized cells, corrupt files get a readable error instead of a blank panel
 
-<!-- OPTIONAL SCREENSHOTS (a small gallery or table works well):
-     docs/light-mode.png  — the same preview in light mode
-     docs/wide.png        — a 300-column file showing the orange "only the first 200 of 300 columns" warning
-     docs/error.png       — the error view for a corrupt file -->
+<p align="center">
+  <img src="docs/light-mode.png" width="720" alt="Kolon preview in light mode">
+</p>
 
 ## Install
 
