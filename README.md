@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/icon.png" width="128" alt="Kolon app icon">
+</p>
+
 # Kolon
 
 **Quick Look for Apache Parquet on macOS.** Select a `.parquet` file in Finder, press <kbd>Space</kbd>, see your data — schema, types, and rows in a native table. No Python, no Java, nothing else to install.

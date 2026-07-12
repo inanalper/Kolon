@@ -16,6 +16,9 @@ targets:
     type: application
     platform: macOS
     sources: [App]
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     entitlements:
       path: App/Kolon.entitlements
       properties:
