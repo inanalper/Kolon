@@ -8,5 +8,6 @@ Vendor/
 build/
 DerivedData/
 dist/
+.swiftpm/
 
 .DS_Store

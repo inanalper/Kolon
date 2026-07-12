@@ -1,8 +1,8 @@
 import Cocoa
 
 /// Data source + cell production for the NSTableView.
-final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-    static let indexColumnID = "row_index"
+public final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    public static let indexColumnID = "row_index"
 
     private let preview: ParquetPreview
     private let numericColumns: Set<Int>
@@ -14,19 +14,19 @@ final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTableView
         "FLOAT", "DOUBLE", "DECIMAL",
     ]
 
-    init(preview: ParquetPreview) {
+    public init(preview: ParquetPreview) {
         self.preview = preview
         self.numericColumns = Set(preview.columns.enumerated().compactMap { index, column in
             Self.numericTypePrefixes.contains { column.type.hasPrefix($0) } ? index : nil
         })
     }
 
-    static func indexColumnWidth(rowCount: Int) -> CGFloat {
+    public static func indexColumnWidth(rowCount: Int) -> CGFloat {
         max(28, CGFloat(String(rowCount).count) * 8 + 14)
     }
 
     /// Column width estimate based on the header and the first rows.
-    func estimatedWidth(forColumn index: Int) -> CGFloat {
+    public func estimatedWidth(forColumn index: Int) -> CGFloat {
         let column = preview.columns[index]
         var maxLength = column.name.count + column.type.count + 2
         for row in preview.rows.prefix(30) {
@@ -37,13 +37,13 @@ final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTableView
 
     // MARK: - NSTableViewDataSource
 
-    func numberOfRows(in tableView: NSTableView) -> Int {
+    public func numberOfRows(in tableView: NSTableView) -> Int {
         preview.rows.count
     }
 
     // MARK: - NSTableViewDelegate
 
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+    public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let tableColumn else { return nil }
         let identifier = tableColumn.identifier
 

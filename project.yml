@@ -11,6 +11,10 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: "-"
 
+packages:
+  KolonCore:
+    path: KolonCore
+
 targets:
   Kolon:
     type: application
@@ -45,11 +49,10 @@ targets:
     sources: [QuickLook]
     settings:
       base:
-        SWIFT_OBJC_BRIDGING_HEADER: QuickLook/KolonQL-Bridging-Header.h
-        HEADER_SEARCH_PATHS: $(SRCROOT)/Vendor/duckdb
         LIBRARY_SEARCH_PATHS: $(SRCROOT)/Vendor/duckdb
         LD_RUNPATH_SEARCH_PATHS: ["@loader_path/../Frameworks"]
     dependencies:
+      - package: KolonCore
       - framework: Vendor/duckdb/libduckdb.dylib
         embed: true
         codeSign: true

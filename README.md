@@ -61,4 +61,4 @@ Preview limits (the status bar tells you when they kick in): first **500 rows**,
 
 ## License
 
-[GPL-3.0](LICENSE)
+[MIT](LICENSE)

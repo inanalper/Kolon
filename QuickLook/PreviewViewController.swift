@@ -1,4 +1,5 @@
 import Cocoa
+import KolonCore
 import Quartz
 
 /// Theme-aware opaque backdrop; the dynamic color resolves against effectiveAppearance on every draw.

@@ -1,26 +1,27 @@
 import Foundation
+import Cduckdb
 
-struct ParquetPreview {
-    struct Column {
-        let name: String
-        let type: String
+public struct ParquetPreview {
+    public struct Column {
+        public let name: String
+        public let type: String
     }
 
-    let columns: [Column]
+    public let columns: [Column]
     /// nil cell = NULL
-    let rows: [[String?]]
-    let totalRows: Int64
+    public let rows: [[String?]]
+    public let totalRows: Int64
     /// Actual column count in the file; may exceed columns.count due to the column limit
-    let totalColumns: Int
-    let compression: String?
-    let rowGroupCount: Int64?
+    public let totalColumns: Int
+    public let compression: String?
+    public let rowGroupCount: Int64?
 }
 
-enum ParquetReaderError: LocalizedError {
+public enum ParquetReaderError: LocalizedError {
     case openFailed
     case queryFailed(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .openFailed: return "Failed to initialize DuckDB."
         case .queryFailed(let message): return message
@@ -30,15 +31,15 @@ enum ParquetReaderError: LocalizedError {
 
 /// Thin wrapper over the DuckDB C API. Opens an in-memory database
 /// and only ever reads the parquet file.
-final class ParquetReader {
-    static let previewRowLimit = 500
-    static let previewColumnLimit = 200
-    static let cellCharacterLimit = 300
+public final class ParquetReader {
+    public static let previewRowLimit = 500
+    public static let previewColumnLimit = 200
+    public static let cellCharacterLimit = 300
 
     private var database: duckdb_database?
     private var connection: duckdb_connection?
 
-    init() throws {
+    public init() throws {
         guard duckdb_open(nil, &database) == DuckDBSuccess,
               duckdb_connect(database, &connection) == DuckDBSuccess else {
             throw ParquetReaderError.openFailed
@@ -53,7 +54,7 @@ final class ParquetReader {
         duckdb_close(&database)
     }
 
-    func preview(fileAt url: URL) throws -> ParquetPreview {
+    public func preview(fileAt url: URL) throws -> ParquetPreview {
         let path = url.path.replacingOccurrences(of: "'", with: "''")
 
         let schema = try query("DESCRIBE SELECT * FROM read_parquet('\(path)')")
