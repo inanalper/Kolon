@@ -1,0 +1,67 @@
+name: Kolon
+options:
+  bundleIdPrefix: dev.inanalper
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"
+
+targets:
+  Kolon:
+    type: application
+    platform: macOS
+    sources: [App]
+    entitlements:
+      path: App/Kolon.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Kolon
+        LSApplicationCategoryType: public.app-category.developer-tools
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.apache.parquet
+            UTTypeDescription: Apache Parquet data file
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [parquet, pqt, parq]
+    dependencies:
+      - target: KolonQL
+        embed: true
+
+  KolonQL:
+    type: app-extension
+    platform: macOS
+    sources: [QuickLook]
+    settings:
+      base:
+        SWIFT_OBJC_BRIDGING_HEADER: QuickLook/KolonQL-Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/Vendor/duckdb
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/Vendor/duckdb
+        LD_RUNPATH_SEARCH_PATHS: ["@loader_path/../Frameworks"]
+    dependencies:
+      - framework: Vendor/duckdb/libduckdb.dylib
+        embed: true
+        codeSign: true
+    entitlements:
+      path: QuickLook/KolonQL.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
+    info:
+      path: QuickLook/Info.plist
+      properties:
+        CFBundleDisplayName: Kolon Quick Look
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PreviewViewController
+          NSExtensionAttributes:
+            QLSupportedContentTypes: [org.apache.parquet]
+            QLSupportsSearchableItems: false
