@@ -12,6 +12,11 @@ private final class BackgroundView: NSView {
 
 final class PreviewViewController: NSViewController, QLPreviewingController {
 
+    /// AppKit layout of hundreds of columns dominates preview latency
+    /// (~313 ms for 200 columns vs ~78 ms for 40), so only this many are
+    /// mounted before first paint; the rest follow in async batches.
+    private static let columnBatchSize = 40
+
     private var dataSource: PreviewTableDataSource?
 
     override func loadView() {
@@ -89,13 +94,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         indexColumn.resizingMask = []
         tableView.addTableColumn(indexColumn)
 
-        for (i, column) in preview.columns.enumerated() {
-            let tableColumn = NSTableColumn(identifier: .init("col_\(i)"))
-            tableColumn.headerCell.attributedStringValue = Self.headerTitle(for: column)
-            tableColumn.width = dataSource.estimatedWidth(forColumn: i)
-            tableColumn.minWidth = 50
-            tableColumn.maxWidth = 600
-            tableView.addTableColumn(tableColumn)
+        appendColumns(from: 0, upTo: min(Self.columnBatchSize, preview.columns.count),
+                      preview: preview, dataSource: dataSource, tableView: tableView)
+        if preview.columns.count > Self.columnBatchSize {
+            scheduleRemainingColumns(from: Self.columnBatchSize, preview: preview,
+                                     dataSource: dataSource, tableView: tableView)
         }
 
         tableView.dataSource = dataSource
@@ -122,6 +125,33 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             statusBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+    }
+
+    @MainActor
+    private func appendColumns(from start: Int, upTo end: Int, preview: ParquetPreview,
+                               dataSource: PreviewTableDataSource, tableView: NSTableView) {
+        for i in start..<end {
+            let tableColumn = NSTableColumn(identifier: .init("col_\(i)"))
+            tableColumn.headerCell.attributedStringValue = Self.headerTitle(for: preview.columns[i])
+            tableColumn.width = dataSource.estimatedWidth(forColumn: i)
+            tableColumn.minWidth = 50
+            tableColumn.maxWidth = 600
+            tableView.addTableColumn(tableColumn)
+        }
+    }
+
+    @MainActor
+    private func scheduleRemainingColumns(from start: Int, preview: ParquetPreview,
+                                          dataSource: PreviewTableDataSource, tableView: NSTableView) {
+        guard start < preview.columns.count else { return }
+        let end = min(start + Self.columnBatchSize, preview.columns.count)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.dataSource === dataSource else { return }
+            self.appendColumns(from: start, upTo: end, preview: preview,
+                               dataSource: dataSource, tableView: tableView)
+            self.scheduleRemainingColumns(from: end, preview: preview,
+                                          dataSource: dataSource, tableView: tableView)
+        }
     }
 
     private static func headerTitle(for column: ParquetPreview.Column) -> NSAttributedString {
