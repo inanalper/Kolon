@@ -15,6 +15,14 @@ public struct ParquetPreview {
     public let totalColumns: Int
     public let compression: String?
     public let rowGroupCount: Int64?
+    /// Source file, kept so single cells can be re-read in full on demand.
+    public let fileURL: URL
+    /// `row * columns.count + column` keys of cells cut at `cellCharacterLimit`.
+    public let truncatedCells: Set<Int>
+
+    public func isTruncated(row: Int, column: Int) -> Bool {
+        truncatedCells.contains(row * columns.count + column)
+    }
 }
 
 public enum ParquetReaderError: LocalizedError {
@@ -72,8 +80,13 @@ public final class ParquetReader {
             .map { "\"\($0.name.replacingOccurrences(of: "\"", with: "\"\""))\"" }
             .joined(separator: ", ")
         let data = try query("SELECT \(selectList) FROM read_parquet('\(path)') LIMIT \(Self.previewRowLimit)")
+        var truncatedCells = Set<Int>()
         let rows = (0..<data.rowCount).map { row in
-            (0..<data.columnCount).map { data.value(row: row, column: $0) }
+            (0..<data.columnCount).map { column -> String? in
+                let (value, truncated) = data.previewValue(row: row, column: column)
+                if truncated { truncatedCells.insert(row * columns.count + column) }
+                return value
+            }
         }
 
         let count = try query("SELECT count(*) FROM read_parquet('\(path)')")
@@ -97,8 +110,30 @@ public final class ParquetReader {
             totalRows: totalRows,
             totalColumns: allColumns.count,
             compression: compression,
-            rowGroupCount: rowGroupCount
+            rowGroupCount: rowGroupCount,
+            fileURL: url,
+            truncatedCells: truncatedCells
         )
+    }
+
+    /// Re-reads a single cell without the preview's `cellCharacterLimit` cap.
+    /// Returns the value cut at `characterLimit` plus the cell's true length,
+    /// or nil for NULL / out-of-range cells.
+    public func fullValue(fileAt url: URL, row: Int, columnName: String,
+                          characterLimit: Int = 4000) throws -> (value: String, totalLength: Int)? {
+        let path = url.path.replacingOccurrences(of: "'", with: "''")
+        let quoted = "\"" + columnName.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        let result = try query("""
+            SELECT substr(CAST(\(quoted) AS VARCHAR), 1, \(characterLimit)),
+                   length(CAST(\(quoted) AS VARCHAR))
+            FROM read_parquet('\(path)') LIMIT 1 OFFSET \(row)
+            """)
+        guard result.rowCount == 1,
+              let value = result.value(row: 0, column: 0, limit: characterLimit),
+              let totalLength = result.value(row: 0, column: 1).flatMap(Int.init) else {
+            return nil
+        }
+        return (value, totalLength)
     }
 
     // MARK: - Query helpers
@@ -122,16 +157,21 @@ public final class ParquetReader {
             duckdb_destroy_result(&result)
         }
 
-        func value(row: Int, column: Int) -> String? {
+        func value(row: Int, column: Int, limit: Int = ParquetReader.cellCharacterLimit) -> String? {
+            previewValue(row: row, column: column, limit: limit).value
+        }
+
+        func previewValue(row: Int, column: Int,
+                          limit: Int = ParquetReader.cellCharacterLimit) -> (value: String?, truncated: Bool) {
             guard !duckdb_value_is_null(&result, idx_t(column), idx_t(row)),
                   let cString = duckdb_value_varchar(&result, idx_t(column), idx_t(row)) else {
-                return nil
+                return (nil, false)
             }
             defer { duckdb_free(UnsafeMutableRawPointer(mutating: cString)) }
             let value = String(cString: cString)
             // A single cell can reach megabytes in BLOB / long text columns
-            guard value.count > ParquetReader.cellCharacterLimit else { return value }
-            return String(value.prefix(ParquetReader.cellCharacterLimit)) + "…"
+            guard value.count > limit else { return (value, false) }
+            return (String(value.prefix(limit)) + "…", true)
         }
     }
 

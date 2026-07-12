@@ -1,11 +1,48 @@
 import Cocoa
 
+/// Label whose tooltip text is produced lazily, only when AppKit actually
+/// decides to show it (i.e. after the system hover delay) — sweeping the
+/// mouse across cells never invokes the provider.
+final class LazyTooltipTextField: NSTextField {
+    private var toolTipTag: NSView.ToolTipTag?
+
+    var tooltipProvider: (() -> String?)? {
+        didSet {
+            if let tag = toolTipTag {
+                removeToolTip(tag)
+                toolTipTag = nil
+            }
+            if tooltipProvider != nil {
+                toolTipTag = addToolTip(bounds, owner: self, userData: nil)
+            }
+        }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // Tooltip rects don't track resizes (e.g. manual column widening)
+        if tooltipProvider != nil, let tag = toolTipTag {
+            removeToolTip(tag)
+            toolTipTag = addToolTip(bounds, owner: self, userData: nil)
+        }
+    }
+
+    // NSViewToolTipOwner (informal protocol, dispatched via the ObjC selector)
+    @objc func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag,
+                    point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        tooltipProvider?() ?? ""
+    }
+}
+
 /// Data source + cell production for the NSTableView.
 public final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     public static let indexColumnID = "row_index"
 
     private let preview: ParquetPreview
     private let numericColumns: Set<Int>
+    /// Full cell values fetched on demand for tooltips, keyed like truncatedCells
+    private var fullValueCache: [Int: String] = [:]
+    private lazy var detailReader: ParquetReader? = try? ParquetReader()
 
     private static let cellFont = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
     private static let numericTypePrefixes = [
@@ -47,16 +84,17 @@ public final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTa
         guard let tableColumn else { return nil }
         let identifier = tableColumn.identifier
 
-        let cell: NSTextField
-        if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField {
+        let cell: LazyTooltipTextField
+        if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? LazyTooltipTextField {
             cell = reused
         } else {
-            cell = NSTextField(labelWithString: "")
+            cell = LazyTooltipTextField(labelWithString: "")
             cell.identifier = identifier
             cell.font = Self.cellFont
             cell.lineBreakMode = .byTruncatingTail
             cell.usesSingleLineMode = true
         }
+        cell.tooltipProvider = nil
 
         if identifier.rawValue == Self.indexColumnID {
             cell.stringValue = String(row + 1)
@@ -76,6 +114,34 @@ public final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTa
             cell.textColor = .tertiaryLabelColor
         }
         cell.alignment = numericColumns.contains(columnIndex) ? .right : .left
+        if preview.isTruncated(row: row, column: columnIndex) {
+            // Cut at cellCharacterLimit — re-read the real value on hover
+            cell.allowsExpansionToolTips = false
+            cell.tooltipProvider = { [weak self] in self?.fullValue(row: row, column: columnIndex) }
+        } else {
+            // Only clipped by column width at worst; the stored copy is complete
+            cell.allowsExpansionToolTips = true
+        }
         return cell
+    }
+
+    /// Tooltip text for a cell the preview truncated: the full value is
+    /// re-read from the file (once — results are cached).
+    private func fullValue(row: Int, column: Int) -> String? {
+        let key = row * preview.columns.count + column
+        if let cached = fullValueCache[key] { return cached }
+
+        let fallback = preview.rows[row][column]
+        guard let reader = detailReader,
+              let result = (try? reader.fullValue(fileAt: preview.fileURL, row: row,
+                                                  columnName: preview.columns[column].name)) ?? nil else {
+            return fallback  // file gone or unreadable — show the stored copy
+        }
+        var text = result.value
+        if result.totalLength > result.value.count {
+            text += "\n… \(result.totalLength) characters total"
+        }
+        fullValueCache[key] = text
+        return text
     }
 }
