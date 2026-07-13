@@ -125,6 +125,37 @@ public final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTa
         return cell
     }
 
+    // MARK: - Clipboard support
+
+    /// Complete value of one cell for copying: cells cut at
+    /// `cellCharacterLimit` are re-read from the file. nil means NULL.
+    public func copyValue(row: Int, column: Int) -> String? {
+        guard let stored = preview.rows[row][column] else { return nil }
+        guard preview.isTruncated(row: row, column: column),
+              let reader = detailReader,
+              let result = (try? reader.fullValue(fileAt: preview.fileURL, row: row,
+                                                  columnName: preview.columns[column].name,
+                                                  characterLimit: 1_000_000)) ?? nil else {
+            return stored
+        }
+        return result.value
+    }
+
+    /// Selected rows as CSV (RFC 4180 quoting). NULL becomes an empty
+    /// field; cells the preview truncated stay truncated — re-reading
+    /// every long cell of a large selection would block the main thread.
+    public func csv(forRows rows: IndexSet) -> String {
+        rows.map { row in
+            preview.rows[row].map(Self.csvField).joined(separator: ",")
+        }.joined(separator: "\n")
+    }
+
+    static func csvField(_ value: String?) -> String {
+        guard let value else { return "" }
+        guard value.contains(where: { ",\"\n\r".contains($0) }) else { return value }
+        return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    }
+
     /// Tooltip text for a cell the preview truncated: the full value is
     /// re-read from the file (once — results are cached).
     private func fullValue(row: Int, column: Int) -> String? {

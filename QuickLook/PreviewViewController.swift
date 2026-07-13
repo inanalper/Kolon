@@ -10,6 +10,29 @@ private final class BackgroundView: NSView {
     }
 }
 
+/// Table view that owns ⌘C. Handling copy: inside our responder chain also
+/// keeps the action from reaching QuickLookUI's QLUIServiceBaseViewController,
+/// whose own copy: recurses until the preview process dies of stack overflow.
+private final class PreviewTableView: NSTableView {
+    var onCopy: (() -> Void)?
+    /// Data-column index of the most recently clicked cell (nil for the
+    /// row-number column or keyboard-only selection).
+    private(set) var clickedDataColumn: Int?
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let columnIndex = column(at: point)
+        clickedDataColumn = columnIndex >= 0
+            ? Int(tableColumns[columnIndex].identifier.rawValue.dropFirst("col_".count))
+            : nil
+        super.mouseDown(with: event)
+    }
+
+    @objc func copy(_ sender: Any?) {
+        onCopy?()
+    }
+}
+
 final class PreviewViewController: NSViewController, QLPreviewingController {
 
     /// AppKit layout of hundreds of columns dominates preview latency
@@ -18,9 +41,34 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private static let columnBatchSize = 40
 
     private var dataSource: PreviewTableDataSource?
+    private weak var tableView: PreviewTableView?
 
     override func loadView() {
         view = BackgroundView(frame: NSRect(x: 0, y: 0, width: 760, height: 480))
+    }
+
+    /// Backstop for ⌘C landing outside the table (see PreviewTableView).
+    @objc func copy(_ sender: Any?) {
+        copySelection()
+    }
+
+    @MainActor
+    private func copySelection() {
+        guard let dataSource, let tableView else { return }
+        let rows = tableView.selectedRowIndexes
+        guard !rows.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        let text: String
+        if rows.count == 1, let row = rows.first, let column = tableView.clickedDataColumn {
+            text = dataSource.copyValue(row: row, column: column) ?? ""
+        } else {
+            text = dataSource.csv(forRows: rows)
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     func preparePreviewOfFile(at url: URL) async throws {
@@ -78,7 +126,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         let dataSource = PreviewTableDataSource(preview: preview)
         self.dataSource = dataSource
 
-        let tableView = NSTableView()
+        let tableView = PreviewTableView()
+        self.tableView = tableView
+        tableView.onCopy = { [weak self] in self?.copySelection() }
         tableView.style = .plain
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.allowsColumnReordering = false
