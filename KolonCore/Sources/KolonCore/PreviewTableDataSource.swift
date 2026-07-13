@@ -114,8 +114,9 @@ public final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTa
         guard let columnIndex = Int(identifier.rawValue.dropFirst("col_".count)),
               columnIndex < preview.columns.count else { return nil }
 
-        if let value = preview.rows[row][columnIndex] {
-            cell.stringValue = value
+        let value = preview.rows[row][columnIndex]
+        if let value {
+            cell.stringValue = Self.displayText(value)
             cell.textColor = .labelColor
         } else {
             cell.stringValue = "NULL"
@@ -126,11 +127,33 @@ public final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTa
             // Cut at cellCharacterLimit — re-read the real value on hover
             cell.allowsExpansionToolTips = false
             cell.tooltipProvider = { [weak self] in self?.fullValue(row: row, column: columnIndex) }
+        } else if let value, value != cell.stringValue {
+            // Control characters are shown escaped — hover reveals the real,
+            // multi-line value (an expansion tooltip would echo the escapes)
+            cell.allowsExpansionToolTips = false
+            cell.tooltipProvider = { value }
         } else {
             // Only clipped by column width at worst; the stored copy is complete
             cell.allowsExpansionToolTips = true
         }
         return cell
+    }
+
+    /// Control characters rendered as visible escapes so multi-line values
+    /// stay legible in the single-line cell; only the displayed text changes —
+    /// copy and tooltips use the stored value with the real characters.
+    static func displayText(_ value: String) -> String {
+        // Scalar-level scan: "\r\n" is a single Character in Swift, so a
+        // Character-based contains would miss values whose only control
+        // characters are CRLF pairs.
+        guard value.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" || $0 == "\t" }) else {
+            return value
+        }
+        return value
+            .replacingOccurrences(of: "\r\n", with: "\\r\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\t", with: "\\t")
     }
 
     // MARK: - Clipboard support
@@ -149,18 +172,34 @@ public final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTa
         return result.value
     }
 
+    /// How many truncated cells a CSV copy will re-read in full before
+    /// falling back to the previewed text — the re-reads run on the main
+    /// thread, so a pathological selection must stay bounded.
+    static let csvFullReadBudget = 500
+
     /// Selected rows as CSV (RFC 4180 quoting). NULL becomes an empty
-    /// field; cells the preview truncated stay truncated — re-reading
-    /// every long cell of a large selection would block the main thread.
+    /// field; cells the preview truncated are re-read in full, up to
+    /// `csvFullReadBudget` cells per copy.
     public func csv(forRows rows: IndexSet) -> String {
-        rows.map { row in
-            preview.rows[row].map(Self.csvField).joined(separator: ",")
+        var budget = Self.csvFullReadBudget
+        return rows.map { row in
+            preview.rows[row].indices.map { column in
+                var value = preview.rows[row][column]
+                if budget > 0, value != nil, preview.isTruncated(row: row, column: column) {
+                    budget -= 1
+                    value = copyValue(row: row, column: column)
+                }
+                return Self.csvField(value)
+            }.joined(separator: ",")
         }.joined(separator: "\n")
     }
 
     static func csvField(_ value: String?) -> String {
         guard let value else { return "" }
-        guard value.contains(where: { ",\"\n\r".contains($0) }) else { return value }
+        // Scalar-level scan — see displayText for why (CRLF grapheme)
+        guard value.unicodeScalars.contains(where: {
+            $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r"
+        }) else { return value }
         return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 
