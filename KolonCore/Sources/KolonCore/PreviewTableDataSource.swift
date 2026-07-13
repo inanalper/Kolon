@@ -80,6 +80,14 @@ public final class PreviewTableDataSource: NSObject, NSTableViewDataSource, NSTa
 
     // MARK: - NSTableViewDelegate
 
+    /// Lets the QL shell substitute a row view with custom selection
+    /// drawing; nil falls back to the standard NSTableRowView.
+    public var rowViewProvider: ((NSTableView) -> NSTableRowView)?
+
+    public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        rowViewProvider?(tableView)
+    }
+
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let tableColumn else { return nil }
         let identifier = tableColumn.identifier

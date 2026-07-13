@@ -10,22 +10,88 @@ private final class BackgroundView: NSView {
     }
 }
 
+/// Row view that restricts the selection highlight to a single column when
+/// the table is in cell-selection mode (single click on a data cell).
+private final class CellSelectionRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard let table = superview as? PreviewTableView else {
+            super.drawSelection(in: dirtyRect)
+            return
+        }
+        var rect = bounds
+        if let column = table.highlightedColumnIndex {
+            let columnRect = table.rect(ofColumn: column)
+            rect = NSRect(x: columnRect.minX, y: 0, width: columnRect.width, height: bounds.height)
+        }
+        let color: NSColor = isEmphasized
+            ? .selectedContentBackgroundColor
+            : .unemphasizedSelectedContentBackgroundColor
+        color.setFill()
+        rect.fill()
+    }
+}
+
 /// Table view that owns ⌘C. Handling copy: inside our responder chain also
 /// keeps the action from reaching QuickLookUI's QLUIServiceBaseViewController,
 /// whose own copy: recurses until the preview process dies of stack overflow.
 private final class PreviewTableView: NSTableView {
     var onCopy: (() -> Void)?
-    /// Data-column index of the most recently clicked cell (nil for the
-    /// row-number column or keyboard-only selection).
-    private(set) var clickedDataColumn: Int?
+    /// Table-column index of the last single-clicked data cell; nil after a
+    /// double-click (whole-row mode) or a click outside the data columns.
+    private var selectedCellColumn: Int?
+
+    /// Column to restrict the selection highlight to; nil paints full rows
+    /// (multi-row selections always paint full rows).
+    var highlightedColumnIndex: Int? {
+        selectedRowIndexes.count == 1 ? selectedCellColumn : nil
+    }
+
+    /// Data-column index of the selected cell, when in cell-selection mode.
+    var clickedDataColumn: Int? {
+        selectedCellColumn.flatMap {
+            Int(tableColumns[$0].identifier.rawValue.dropFirst("col_".count))
+        }
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let columnIndex = column(at: point)
-        clickedDataColumn = columnIndex >= 0
-            ? Int(tableColumns[columnIndex].identifier.rawValue.dropFirst("col_".count))
-            : nil
+        let isDataColumn = columnIndex >= 0
+            && tableColumns[columnIndex].identifier.rawValue.hasPrefix("col_")
+        // Row-number column click selects the whole row; a data-cell click
+        // highlights just that cell. (Double-click stays Quick Look's own
+        // "open the file" — it can't be suppressed from inside the appex.)
+        let previousSelection = selectedRowIndexes
+        selectedCellColumn = isDataColumn ? columnIndex : nil
+
+        // Select and paint on mouse-DOWN: AppKit's tracking loop inside
+        // super.mouseDown can hold the highlight back until mouse-up,
+        // which reads as a ~0.3 s lag on every click.
+        let clickedRow = row(at: point)
+        if event.clickCount == 1, clickedRow >= 0,
+           event.modifierFlags.intersection([.shift, .command]).isEmpty {
+            selectRowIndexes([clickedRow], byExtendingSelection: false)
+        }
+        repaintRows(previousSelection.union(selectedRowIndexes))
+        displayIfNeeded()
+        // Push the freshly drawn layers to the render server NOW — the
+        // regular commit waits for the runloop turn after mouse-up.
+        CATransaction.flush()
+
         super.mouseDown(with: event)
+
+        // Modifier clicks and drag-selects resolve inside super — repaint
+        // whatever they touched. (Never all visible rows: that lags badly
+        // on 200-column files.)
+        repaintRows(previousSelection.union(selectedRowIndexes))
+    }
+
+    private func repaintRows(_ rows: IndexSet) {
+        for row in rows {
+            rowView(atRow: row, makeIfNecessary: false)?.needsDisplay = true
+        }
     }
 
     @objc func copy(_ sender: Any?) {
@@ -129,6 +195,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         let tableView = PreviewTableView()
         self.tableView = tableView
         tableView.onCopy = { [weak self] in self?.copySelection() }
+        dataSource.rowViewProvider = { tableView in
+            let identifier = NSUserInterfaceItemIdentifier("kolon_cell_selection_row")
+            if let reused = tableView.makeView(withIdentifier: identifier, owner: nil) as? CellSelectionRowView {
+                return reused
+            }
+            let rowView = CellSelectionRowView()
+            rowView.identifier = identifier
+            return rowView
+        }
         tableView.style = .plain
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.allowsColumnReordering = false
